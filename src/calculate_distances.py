@@ -126,25 +126,10 @@ def calculate_min_item_distances(
     having to worry about dropping the current row of interest.
 
     """
-    # current_row = embedding_matrix[current_row_pos]
-    # current_row_index = index_matrix[current_row_pos]
-
-    # def current_row_norm(x, current_row=current_row):
-    #     """A wrapper function to vectorize the norm"""
-    #     return norm_function(current_row, x)
-
-    # distances = np.zeros(index_matrix.size)
-    # for k in range(index_matrix.size):
-    #     distances[k] = norm_function(
-    #         embedding_matrix[current_row_pos], embedding_matrix[k]
-    #     )
     distances = get_distances(
         index_matrix, embedding_matrix, current_row_pos, norm_function
     )
-    # distances = np.apply_along_axis(
-    #     current_row_norm, axis=1, arr=embedding_matrix
-    # )
-    # Experimental linear time indices of smallest
+    # Experimental linear time indices of smallest elements
     distance_indices = np.argpartition(distances, -num_closest)[-num_closest:]
     # Stack the distance and index (identifier) to keep IDs known
     index_distance_pairs = np.column_stack(
@@ -156,23 +141,23 @@ def calculate_min_item_distances(
     return sorted_index_distance_pairs
 
 
-@jit
-def distance_loop(
+def distance_iteration(
+    line,
     index_matrix,
     embedding_matrix,
     num_closest,
     norm_fns,
 ):
     """Sloppy attempt to get numba to parallelize the main loop further"""
-    for line in tqdm(range(len(embedding_matrix))):
-        for norm_fn in norm_fns:
-            min_item_distances = calculate_min_item_distances(
-                index_matrix=index_matrix,
-                embedding_matrix=embedding_matrix,
-                current_row_pos=line,
-                num_closest=num_closest,
-                norm_function=norm_fn,
-            )
+    for norm_fn in norm_fns:
+        min_item_distances = calculate_min_item_distances(
+            index_matrix=index_matrix,
+            embedding_matrix=embedding_matrix,
+            current_row_pos=line,
+            num_closest=num_closest,
+            norm_function=norm_fn,
+        )
+    return min_item_distances
 
 
 def calculate_distances(embedding_filename: str, num_closest: int = 256):
@@ -182,16 +167,20 @@ def calculate_distances(embedding_filename: str, num_closest: int = 256):
     """
     norm_fns = (l_1_norm, l_2_norm, l_inf_norm, cosine_similarity)
     index_matrix, embedding_matrix = import_data(embedding_filename)
-    res = distance_loop(index_matrix, embedding_matrix, num_closest, norm_fns)
+
+    def curr_iter(line):
+        """Wrapper for the iteration function to allow for threaded mapping"""
+        return distance_iteration(
+            line=line,
+            index_matrix=index_matrix,
+            embedding_matrix=embedding_matrix,
+            num_closest=num_closest,
+            norm_fns=norm_fns,
+        )
+
     for line in tqdm(range(len(embedding_matrix))):
-        for norm_fn in norm_fns:
-            min_item_distances = calculate_min_item_distances(
-                index_matrix=index_matrix,
-                embedding_matrix=embedding_matrix,
-                current_row_pos=line,
-                num_closest=num_closest,
-                norm_function=norm_fn,
-            )
+        curr_iter(line)
+
     print("SUCCESS")
 
 

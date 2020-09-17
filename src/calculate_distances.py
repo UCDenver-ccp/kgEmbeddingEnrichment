@@ -35,6 +35,7 @@
 from tqdm import tqdm
 import numpy as np
 from numba import njit
+from joblib import Parallel, delayed
 
 
 def import_data(embedding_filename: str):
@@ -178,8 +179,9 @@ def calculate_distances(embedding_filename: str, num_closest: int = 256):
             norm_fns=norm_fns,
         )
 
-    for line in tqdm(range(len(embedding_matrix))):
-        curr_iter(line)
+    results = Parallel(n_jobs=-1)(
+        delayed(curr_iter)(line) for line in tqdm(range(len(embedding_matrix)))
+    )
 
     print("SUCCESS")
 

@@ -32,6 +32,7 @@
 
 # Code:
 
+import argparse
 from tqdm import tqdm
 import numpy as np
 from numba import njit
@@ -60,7 +61,9 @@ def import_data(embedding_filename: str):
         )
 
         #
-        for idx, line in enumerate(embedding_file_handle.readlines()):
+        for idx, line in tqdm(
+            enumerate(embedding_file_handle.readlines()), unit="lines"
+        ):
             line_data = line.strip().split(sep=" ")
             index_matrix[idx] = line_data[0]
             embedding_matrix[idx] = line_data[1:]
@@ -86,10 +89,13 @@ def l_inf_norm(row_m, row_n):
 
 
 @njit
-def cosine_similarity(row_m, row_n):
-    """Calculate the cosine similarity between row m and row n"""
-    return np.dot(row_m, row_n) / (
-        np.linalg.norm(row_m) * np.linalg.norm(row_n)
+def neg_cosine_similarity(row_m, row_n):
+    """Calculate the cosine similarity between row m and row n. Note that
+    we take the negative value so that most similar things have positive
+    values.
+    """
+    return -(
+        np.dot(row_m, row_n) / (np.linalg.norm(row_m) * np.linalg.norm(row_n))
     )
 
 
@@ -104,7 +110,7 @@ def get_distances(
 
     """
     current_row = embedding_matrix[current_row_pos]
-    distances = np.zeros(index_matrix.size)
+    distances = np.empty(index_matrix.size)
     for comparison_row_pos in range(index_matrix.size):
         distances[comparison_row_pos] = norm_function(
             current_row,
@@ -131,7 +137,8 @@ def calculate_min_item_distances(
         index_matrix, embedding_matrix, current_row_pos, norm_function
     )
     # Experimental linear time indices of smallest elements
-    distance_indices = np.argpartition(distances, -num_closest)[-num_closest:]
+    # distance_indices = np.argpartition(distances, -num_closest)[-num_closest:]
+    distance_indices = distances.argsort()[:num_closest]
     # Stack the distance and index (identifier) to keep IDs known
     index_distance_pairs = np.column_stack(
         (distances[distance_indices], index_matrix[distance_indices])
@@ -150,24 +157,32 @@ def distance_iteration(
     norm_fns,
 ):
     """Sloppy attempt to get numba to parallelize the main loop further"""
+    min_item_distances = []
     for norm_fn in norm_fns:
-        min_item_distances = calculate_min_item_distances(
-            index_matrix=index_matrix,
-            embedding_matrix=embedding_matrix,
-            current_row_pos=line,
-            num_closest=num_closest,
-            norm_function=norm_fn,
+        min_item_distances.append(
+            calculate_min_item_distances(
+                index_matrix=index_matrix,
+                embedding_matrix=embedding_matrix,
+                current_row_pos=line,
+                num_closest=num_closest,
+                norm_function=norm_fn,
+            )
         )
     return min_item_distances
 
 
-def calculate_distances(embedding_filename: str, num_closest: int = 256):
+def calculate_distances(
+    embedding_filename: str, output_path: str, num_closest: int = 256
+):
     """Calculate the pairwise distances for the KG embedding using all
     provided norms, saving the maximum N values to a file for each
     type of embedding.
     """
-    norm_fns = (l_1_norm, l_2_norm, l_inf_norm, cosine_similarity)
+    norm_fns = (l_1_norm, l_2_norm, l_inf_norm, neg_cosine_similarity)
+
+    print("Starting data import")
     index_matrix, embedding_matrix = import_data(embedding_filename)
+    print("Finished data import")
 
     def curr_iter(line):
         """Wrapper for the iteration function to allow for threaded mapping"""
@@ -179,24 +194,59 @@ def calculate_distances(embedding_filename: str, num_closest: int = 256):
             norm_fns=norm_fns,
         )
 
+    print("Starting distance calculations")
     results = Parallel(n_jobs=-1)(
-        delayed(curr_iter)(line) for line in tqdm(range(len(embedding_matrix)))
+        delayed(curr_iter)(line)
+        for line in tqdm(range(len(embedding_matrix)), unit="calcs")
+    )
+    print("Finished distance calculations")
+
+    # Write each norm function one at a time
+    for norm_fn_idx, norm_fn in enumerate(norm_fns):
+        fn_name = norm_fn.__name__
+        print(f"Starting writing output file for {fn_name}")
+        result_file_path = f"{output_path}/{fn_name}.emb.distances"
+        with open(result_file_path, "w") as result_file_handle:
+            for res_item in tqdm(results, unit="lines"):
+                # Grab that norm's specific output
+                fn_output = res_item[norm_fn_idx]
+                # Write each norm item
+                for item in fn_output:
+                    result_file_handle.write(f"{int(item[1])}:{item[0]} ")
+                # Break the line
+                result_file_handle.write("\n")
+        print(f"Finished writing output file for {fn_name}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Calculate distances from vector embeddings"
+    )
+    parser.add_argument(
+        "data",
+        metavar="d",
+        help="the embedding data file",
+    )
+    parser.add_argument(
+        "output_path",
+        metavar="op",
+        help="the directory to write output to",
     )
 
-    print("SUCCESS")
-
-
-# if __name__ == '__main__':
-#     root_dir = os.path.dirname(os.path.abspath(__file__))
-#     calculate_distances(embedding_filename=f"{root_dir}/../data/PheKnowLator_node2vec_Embeddings_07Sept2020_First10000.emb")
+    args = parser.parse_args()
+    calculate_distances(
+        embedding_filename=args.data, output_path=args.output_path
+    )
 # calculate_distances(
 #     embedding_filename="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_node2vec_Embeddings_07Sept2020_First1000.emb"
+# # )
+# distances = calculate_distances(
+#     embedding_filename="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_node2vec_Embeddings_07Sept2020_First10000.emb",
+#     output_path="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/processed",
 # )
-calculate_distances(
-    embedding_filename="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_node2vec_Embeddings_07Sept2020_First10000.emb"
-)
 # calculate_distances(
-#     embedding_filename="/home/zach/Downloads/PheKnowLator_Instance_RelsOnly_NoOWL_node2vec_Embeddings_07Sept2020.emb"
+#     embedding_filename="/home/zach/Downloads/PheKnowLator_Instance_RelsOnly_NoOWL_node2vec_Embeddings_07Sept2020.emb",
+#     output_path="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/processed",
 # )
 
 #

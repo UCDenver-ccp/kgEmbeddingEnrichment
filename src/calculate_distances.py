@@ -62,7 +62,9 @@ def import_data(embedding_filename: str):
 
         #
         for idx, line in tqdm(
-            enumerate(embedding_file_handle.readlines()), unit="lines"
+            enumerate(embedding_file_handle.readlines()),
+            unit="lines",
+            desc="input data",
         ):
             line_data = line.strip().split(sep=" ")
             index_matrix[idx] = line_data[0]
@@ -180,9 +182,7 @@ def calculate_distances(
     """
     norm_fns = (l_1_norm, l_2_norm, l_inf_norm, neg_cosine_similarity)
 
-    print("Starting data import")
     index_matrix, embedding_matrix = import_data(embedding_filename)
-    print("Finished data import")
 
     def curr_iter(line):
         """Wrapper for the iteration function to allow for threaded mapping"""
@@ -194,20 +194,21 @@ def calculate_distances(
             norm_fns=norm_fns,
         )
 
-    print("Starting distance calculations")
-    results = Parallel(n_jobs=-1)(
+    results = Parallel(n_jobs=-1, backend="loky")(
         delayed(curr_iter)(line)
-        for line in tqdm(range(len(embedding_matrix)), unit="calcs")
+        for line in tqdm(
+            range(len(embedding_matrix)),
+            unit="calcs",
+            desc="distance calculations",
+        )
     )
-    print("Finished distance calculations")
 
     # Write each norm function one at a time
     for norm_fn_idx, norm_fn in enumerate(norm_fns):
         fn_name = norm_fn.__name__
-        print(f"Starting writing output file for {fn_name}")
         result_file_path = f"{output_path}/{fn_name}.emb.distances"
         with open(result_file_path, "w") as result_file_handle:
-            for res_item in tqdm(results, unit="lines"):
+            for res_item in tqdm(results, unit="lines", desc=fn_name):
                 # Grab that norm's specific output
                 fn_output = res_item[norm_fn_idx]
                 # Write each norm item
@@ -215,7 +216,6 @@ def calculate_distances(
                     result_file_handle.write(f"{int(item[1])}:{item[0]} ")
                 # Break the line
                 result_file_handle.write("\n")
-        print(f"Finished writing output file for {fn_name}")
 
 
 if __name__ == "__main__":
@@ -223,13 +223,13 @@ if __name__ == "__main__":
         description="Calculate distances from vector embeddings"
     )
     parser.add_argument(
-        "data",
-        metavar="d",
+        "-d",
+        "--data",
         help="the embedding data file",
     )
     parser.add_argument(
-        "output_path",
-        metavar="op",
+        "-o",
+        "--output_path",
         help="the directory to write output to",
     )
 
@@ -237,17 +237,6 @@ if __name__ == "__main__":
     calculate_distances(
         embedding_filename=args.data, output_path=args.output_path
     )
-# calculate_distances(
-#     embedding_filename="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_node2vec_Embeddings_07Sept2020_First1000.emb"
-# # )
-# distances = calculate_distances(
-#     embedding_filename="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_node2vec_Embeddings_07Sept2020_First10000.emb",
-#     output_path="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/processed",
-# )
-# calculate_distances(
-#     embedding_filename="/home/zach/Downloads/PheKnowLator_Instance_RelsOnly_NoOWL_node2vec_Embeddings_07Sept2020.emb",
-#     output_path="/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/processed",
-# )
 
 #
 # calculate_distances.py ends here

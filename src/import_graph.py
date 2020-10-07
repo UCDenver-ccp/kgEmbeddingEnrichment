@@ -35,10 +35,6 @@
 from contextlib import contextmanager
 import rdflib
 
-owl_identifier = "PheKnowLator_OWL"
-dir_prefix = "/home/zach/data"
-owl_uri = f"{dir_prefix}/rdflib_PheKnowLator_OWL_store"
-
 
 @contextmanager
 def open_owl_graph(uri, identifier, graph_path=None):
@@ -59,10 +55,6 @@ def open_owl_graph(uri, identifier, graph_path=None):
     finally:
         graph.close()
 
-
-with open_owl_graph(owl_uri, owl_identifier) as owl_graph:
-    for subj, pred, obj in owl_graph:
-        print(subj, pred, obj)
 
 #
 # import_graph.py ends here

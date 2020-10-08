@@ -46,14 +46,21 @@ def open_owl_graph(uri, identifier, graph_path=None):
 
     """
     try:
+        # Only force create if a path is provided
+        create_graph = bool(graph_path)
+        # Open and load the on-disk store
         graph_id = rdflib.URIRef(identifier)
         graph = rdflib.Graph("Sleepycat", identifier=graph_id)
-        graph.open(uri, create=False)
+        graph.open(uri, create=create_graph)
+        # Parse the file at GRAPH_PATH if set
         if graph_path:
             graph.parse(graph_path)
         yield graph
     finally:
-        graph.close()
+        try:
+            graph.close()
+        except Exception:
+            pass
 
 
 #

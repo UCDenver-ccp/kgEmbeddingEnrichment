@@ -50,29 +50,15 @@ def import_distance_distribution(distance_file_path):
     distances = np.empty(int(num_lines * num_distances), dtype=np.float32)
     with open(distance_file_path, "r") as distance_file_handle:
         i = 0
-        for line in tqdm(distance_file_handle, total=num_lines, desc=f"Importing data"):
+        for line in tqdm(
+            distance_file_handle, total=num_lines, desc=f"Importing data"
+        ):
             for item in line.strip().split(sep=" ")[1:]:
                 item_split = item.split(sep=":")
                 ids[i] = item_split[0]
                 distances[i] = item_split[1]
                 i += 1
     return (ids, distances)
-
-
-def get_id_neighbors(distance_file_path, id_list):
-    """Given id_list, import all nearest neighbors into one list"""
-    neighbor_ids = []
-    with open(distance_file_path, "r") as distance_file_handle:
-        i = 0
-        for line in tqdm(distance_file_handle, desc="Getting idlist neighbor ids"):
-            line_split = line.strip().split(sep=" ")
-            curr_id = int(line_split[0].split(":")[0])
-            if curr_id in id_list:
-                for item in line_split[1:]:
-                    item_split = item.split(sep=":")
-                    neighbor_ids.append(int(item_split[0]))
-                    i += 1
-    return neighbor_ids
 
 
 def plot_distance_distribution(distances):
@@ -682,7 +668,9 @@ url_regex_pairs = [
 def rels_to_categorical(rels_dic, regex_pairs=url_regex_pairs):
     """Converts a relation to it's broader ontological category"""
     rels_categorical = {}
-    for identifier, url in tqdm(rels_dic.items(), desc="Converting ids to category"):
+    for identifier, url in tqdm(
+        rels_dic.items(), desc="Converting ids to category"
+    ):
         for pattern, category in regex_pairs:
             if re.match(pattern, url, flags=re.IGNORECASE):
                 rels_categorical[identifier] = category
@@ -711,59 +699,33 @@ rels = import_instance_rels(
 rels_categorical = rels_to_categorical(rels)
 
 # Get counts and percentage of each id globally
-ids_present_categorical = [rels_categorical[i] for i in tqdm(l_1_ids, desc="Converting id -> categorical")]
+ids_present_categorical = [
+    rels_categorical[i]
+    for i in tqdm(l_1_ids, desc="Converting id -> categorical")
+]
 count_categorical = Counter(ids_present_categorical)
 plot_category_distribution(
     count_categorical, threshold=0.01, out_path="l_2_data_dist.eps"
 )
 
-prelim_ids = [
-    57181,
-    7316,
-    1263,
-    4092,
-    7566,
-    5468,
-    4023,
-]
-urls = [f"https://www.ncbi.nlm.nih.gov/gene/{x}" for x in prelim_ids]
-matches = [(k, v) for k, v in tqdm(rels.items(), desc="Finding matched ids") if v in urls]
-if len(matches) != len(prelim_ids):
-    print("An error occurred looking up your gene id in the relations dict")
-matched_ids = [x[0] for x in matches]
-id_neighbors = get_id_neighbors(l_1_path, matched_ids)
-id_neighbors_categorical = [rels_categorical[x] for x in id_neighbors]
-neighbor_counter = Counter(id_neighbors)
-neighbor_counter_categorical = Counter(id_neighbors_categorical)
-shared_neighbors = {
-    x: count for x, count in neighbor_counter.items() if count > 1
-}
-shared_neighbor_ids = [rels[i] for i in shared_neighbors]
 
-plot_category_distribution(neighbor_counter_categorical, threshold=0)
+# plot_category_distribution(neighbor_counter_categorical, threshold=0)
 
 # Use hypergeometric test, p = survival function
 # What's an appropriate population to use?
-def test_prob(num_hits, pop_size, num_draws, num_matching=1):
-    """Perform a hypergeometric test to see the probability of drawing the
-    same entity num_hits many times. Need to check math
-
-    """
-    dist = hypergeom(pop_size, num_matching, num_draws)
-    pval = dist.sf(num_hits - 1)
-    return pval
 
 
-plot_category_distribution(
-    neighbor_counter_categorical, threshold=0, out_path="sample_data_dist.eps"
-)
+# plot_category_distribution(
+#     neighbor_counter_categorical, threshold=0, out_path="sample_data_dist.eps"
+# )
 
-prob = test_prob(4, len(rels), 255 * len(prelim_ids))
+# prob = test_prob(4, len(rels), 255 * len(prelim_ids))
 
 # Test unpickling
-import pickle
-with open("/hdd/data/embeddingEnrichment/model.pckl", 'rb') as model_handle:
-    model = pickle.load(model_handle)
+# import pickle
+
+# with open("/hdd/data/embeddingEnrichment/model.pckl", "rb") as model_handle:
+#     model = pickle.load(model_handle)
 
 #
 # calculate_basic_statistics.py ends here

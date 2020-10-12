@@ -32,6 +32,7 @@
 
 # Code:
 
+import subprocess
 from contextlib import contextmanager
 import rdflib
 
@@ -60,7 +61,7 @@ def open_owl_graph(uri, identifier, graph_path=None):
         try:
             graph.close()
         except Exception:
-            pass
+            subprocess.check_call(["db_recover", "-ch", uri])
 
 
 #

@@ -34,7 +34,7 @@ import re
 import json
 from collections import Counter
 import numpy as np
-from scipy.stats import hypergeom
+from calculate_enrichment import prelim_ids, get_id_neighbors
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -45,15 +45,15 @@ def import_distance_distribution(distance_file_path):
     array.
     """
     num_lines = 1015946
-    num_distances = 255
+    num_distances = 64
     ids = np.empty(int(num_lines * num_distances), dtype=np.float32)
     distances = np.empty(int(num_lines * num_distances), dtype=np.float32)
     with open(distance_file_path, "r") as distance_file_handle:
         i = 0
         for line in tqdm(
-            distance_file_handle, total=num_lines, desc=f"Importing data"
+            distance_file_handle, total=num_lines, desc="Importing data"
         ):
-            for item in line.strip().split(sep=" ")[1:]:
+            for item in line.strip().split(sep=" ")[1:65]:
                 item_split = item.split(sep=":")
                 ids[i] = item_split[0]
                 distances[i] = item_split[1]
@@ -75,7 +75,7 @@ def plot_distance_distribution(distances):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     # Set labels
-    num_neighbors = 255
+    num_neighbors = 64
     ax.set_title(
         f"Histogram of $L_1$ Norm Nearest Neighbor Distribution\n(n={num_neighbors}/node)"
     )
@@ -112,7 +112,7 @@ def plot_category_distribution(category_counter, threshold=0.01, out_path=None):
 
 # Need to add a mapping from URL to category
 url_regex_pairs = [
-    (r"https://github.com/callahantiff/PheKnowLator/.*", "PheKnowLator"),
+    (r"https://github.com/callahantiff/PheKnowLator/.*", "OWL Classes"),
     (r"https://reactome.org/content/detail/.*", "Reactome"),
     (r"https://www.ncbi.nlm.nih.gov/snp/.*", "SNP"),
     (r"https://www.ncbi.nlm.nih.gov/gene/.*", "Gene"),
@@ -174,7 +174,7 @@ url_regex_pairs = [
     (r"http://purl.obolibrary.org/obo/CEPH.*", "Cephalopod Ontology"),
     (
         r"http://purl.obolibrary.org/obo/CHEBI.*",
-        "Chemical Entities of Biological Interest",
+        "CHEBI",
     ),
     (
         r"http://purl.obolibrary.org/obo/CHEMINF.*",
@@ -616,7 +616,7 @@ url_regex_pairs = [
     (r"http://purl.obolibrary.org/obo/TXPO.*", "Toxic Process Ontology"),
     (
         r"http://purl.obolibrary.org/obo/UBERON.*",
-        "Uberon multi-species anatomy ontology",
+        "Multi-species anatomy",
     ),
     (r"http://purl.obolibrary.org/obo/UO.*", "Units of measurement ontology"),
     (r"http://purl.obolibrary.org/obo/UPA.*", "Unipathway"),
@@ -689,24 +689,56 @@ def import_instance_rels(instance_rels_path):
     return rels_dic
 
 
-l_1_path = "/hdd/data/embeddingEnrichment/distances/l_2_norm.emb.distances"
-l_1_values = import_distance_distribution(l_1_path)
-l_1_ids = l_1_values[0]
-l_1_distances = l_1_values[1]
 rels = import_instance_rels(
     "/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_Instance_RelationsOnly_NotClosed_NoOWL_Triples_Integer_Identifier_Map.json"
 )
-rels_categorical = rels_to_categorical(rels)
-
-# Get counts and percentage of each id globally
-ids_present_categorical = [
-    rels_categorical[i]
-    for i in tqdm(l_1_ids, desc="Converting id -> categorical")
+rels_inverted = {v: k for k,v in rels.items()}
+norm_info = [
+    ("/hdd/data/embeddingEnrichment/distances/l_1_norm.emb.distances", "l_1"),
+    ("/hdd/data/embeddingEnrichment/distances/l_2_norm.emb.distances", "l_2"),
+    (
+        "/hdd/data/embeddingEnrichment/distances/l_inf_norm.emb.distances",
+        "l_inf",
+    ),
+    (
+        "/hdd/data/embeddingEnrichment/distances/neg_cosine_similarity.emb.distances"
+        "neg_cos",
+    ),
 ]
-count_categorical = Counter(ids_present_categorical)
-plot_category_distribution(
-    count_categorical, threshold=0.01, out_path="l_2_data_dist.eps"
-)
+
+
+def gen_plots(file_path, prefix, rels):
+    """Gen characteristic plots for each type of norm used. Essential for
+    proper display
+    """
+    norm_values = import_distance_distribution(file_path)
+    norm_ids = norm_values[0]
+    norm_distances = norm_values[1]
+    rels_categorical = rels_to_categorical(rels)
+
+    # Get counts and percentage of each id globally
+    ids_present_categorical = [
+        rels_categorical[i]
+        for i in tqdm(norm_ids, desc="Converting id -> categorical")
+    ]
+    count_categorical = Counter(ids_present_categorical)
+    plot_category_distribution(
+        count_categorical, threshold=0.01, out_path=f"{prefix}_data_dist.eps"
+    )
+    sample_neighbors = get_id_neighbors(file_path, [rels_inverted[x] for x in prelim_ids])
+    sample_present_categorical = [
+        rels_categorical[i]
+        for i in tqdm(sample_neighbors, desc="Converting id -> categorical")
+    ]
+    sample_categorical = Counter(sample_present_categorical)
+    plot_category_distribution(
+        sample_categorical, threshold=0.01, out_path=f"{prefix}_sample_dist.eps"
+    )
+
+
+norm_info = [("/hdd/data/embeddingEnrichment/distances/neg_cosine_similarity.emb.distances", "neg_cos",)]
+for file_path, label in norm_info:
+    gen_plots(file_path, label, rels)
 
 
 # plot_category_distribution(neighbor_counter_categorical, threshold=0)

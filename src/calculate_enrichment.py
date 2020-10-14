@@ -39,6 +39,22 @@ from tqdm import tqdm
 from scipy.stats import fisher_exact
 
 
+def unpickle_or_process(pickle_path, alt_function):
+    """Attempts to unpickle the file at path, otherwise runs 'function'
+    and put its output as a pickle. Function should be a lambda to
+    defer evaluation to only the false loop.
+
+    """
+    if exists(pickle_path):
+        with open(pickle_path, "rb") as pickle_handle:
+            pickled = pickle.load(pickle_handle)
+    else:
+        pickled = alt_function()
+        with open(pickle_path, "wb") as pickle_handle:
+            pickle.dump(pickled, pickle_handle)
+    return pickled
+
+
 def import_instance_rels(instance_rels_path):
     """Import instance relations from a given JSON file"""
     with open(instance_rels_path) as instance_rels_handle:
@@ -61,7 +77,7 @@ def get_id_neighbors(distance_file_path, id_list):
             line_split = line.strip().split(sep=" ")
             curr_id = int(line_split[0].split(":")[0])
             if curr_id in id_set:
-                for item in line_split[1:]:
+                for item in line_split[0:65]:
                     item_split = item.split(sep=":")
                     neighbor_ids.append(int(item_split[0]))
                     i += 1
@@ -98,7 +114,7 @@ def get_id_neighbor_list(id_list, neighbor_file_path):
     id_neighbors = get_id_neighbors(neighbor_file_path, matched_ids)
     neighbor_counter = Counter(id_neighbors)
     shared_neighbors = {
-        x: count for x, count in neighbor_counter.items() if count > 1
+        x: count for x, count in neighbor_counter.items()  # if count > 1
     }
     shared_neighbors = [rels[i] for i in shared_neighbors]
     return shared_neighbors
@@ -130,93 +146,93 @@ def get_all_predicates(subject, graph):
     return list(matched_predicates)
 
 
-def get_nearest_onto_terms(subjects, onto_str_match, graph):
-    """Get the nearest nodes matching onto_str_match in graph starting
-    from curr_subjects. This search is independent of subsumption
-    hierarchy and serves mostly to walk through the anonymous nodes
-    that result from creation of the OWL graph.
+# def get_nearest_onto_terms(subjects, onto_str_match, graph):
+#     """Get the nearest nodes matching onto_str_match in graph starting
+#     from curr_subjects. This search is independent of subsumption
+#     hierarchy and serves mostly to walk through the anonymous nodes
+#     that result from creation of the OWL graph.
 
-    """
-    collected_predicates = []
-    prev_len = len(collected_predicates) + 1
-    curr_iter_preds = subjects.copy()
-    matched_onto_terms = []
-    loop_count = 0
-    # Check if we have a hit for ontology terms yet
-    while len(collected_predicates) != prev_len:
-        next_iter_preds = set()
-        for neighbor_id in tqdm(
-            curr_iter_preds, desc=f"Initial onto search, loop {loop_count}"
-        ):
-            item_preds = [
-                pred
-                for pred in get_all_predicates(neighbor_id, graph)
-                if pred not in collected_predicates
-                and ("obolibrary" in str(pred) or "github" in str(pred))
-            ]
-            for k, item in enumerate(item_preds):
-                if "github" in str(item):
-                    item_preds[k] = basename(item)
-            next_iter_preds.update(item_preds)
-        # Use the new set of predicates for the next iteration
-        prev_len = len(collected_predicates)
-        collected_predicates.extend(next_iter_preds)
-        curr_iter_preds = next_iter_preds.copy()
-        matched_onto_terms.extend(
-            [x for x in collected_predicates if onto_str_match in str(x)]
-        )
-        if len(curr_iter_preds) == 0:
-            return matched_onto_terms
-            raise Exception("Graph walk exhausted.")
-        loop_count += 1
-    return matched_onto_terms
+#     """
+#     collected_predicates = []
+#     prev_len = len(collected_predicates) + 1
+#     curr_iter_preds = subjects.copy()
+#     matched_onto_terms = []
+#     loop_count = 0
+#     # Check if we have a hit for ontology terms yet
+#     while len(collected_predicates) != prev_len:
+#         next_iter_preds = set()
+#         for neighbor_id in tqdm(
+#             curr_iter_preds, desc=f"Initial onto search, loop {loop_count}"
+#         ):
+#             item_preds = [
+#                 pred
+#                 for pred in get_all_predicates(neighbor_id, graph)
+#                 if pred not in collected_predicates
+#                 and ("obolibrary" in str(pred) or "github" in str(pred))
+#             ]
+#             for k, item in enumerate(item_preds):
+#                 if "github" in str(item):
+#                     item_preds[k] = basename(item)
+#             next_iter_preds.update(item_preds)
+#         # Use the new set of predicates for the next iteration
+#         prev_len = len(collected_predicates)
+#         collected_predicates.extend(next_iter_preds)
+#         curr_iter_preds = next_iter_preds.copy()
+#         matched_onto_terms.extend(
+#             [x for x in collected_predicates if onto_str_match in str(x)]
+#         )
+#         if len(curr_iter_preds) == 0:
+#             return matched_onto_terms
+#             raise Exception("Graph walk exhausted.")
+#         loop_count += 1
+#     return matched_onto_terms
 
 
-def get_onto_hierarchy_terms(onto_terms, onto_str_match, graph):
-    """Given MATCHED_ONTO_TERMS, returns all terms matching subClassOf for
-    those terms all the way up their ontology hierarchy.
+# def get_onto_hierarchy_terms(onto_terms, onto_str_match, graph):
+#     """Given MATCHED_ONTO_TERMS, returns all terms matching subClassOf for
+#     those terms all the way up their ontology hierarchy.
 
-    """
-    hierarchy_onto_terms = onto_terms.copy()
-    hierarchy_onto_set = set(hierarchy_onto_terms)
-    next_onto_terms = onto_terms.copy()
-    loop_count = 0
-    curr_onto_len = 0
-    while len(hierarchy_onto_terms) != curr_onto_len:
-        curr_onto_len = len(hierarchy_onto_terms)
-        new_onto_terms = []
-        for onto_term in tqdm(
-            next_onto_terms, desc=f"Hierarchy walk, loop {loop_count}"
-        ):
-            # try:
-            loop_terms = [
-                p
-                for _, _, p in [
-                    x
-                    for x in graph.triples(
-                        subj=onto_term,
-                        obj="http://www.w3.org/2000/01/rdf-schema#subClassOf",
-                    )
-                ]
-                if onto_str_match in str(p)
-            ]
-            for k, item in enumerate(loop_terms):
-                if "github" in str(item):
-                    loop_terms[k] = basename(item)
-            new_onto_terms.extend(loop_terms)
-            # except Exception:
-            #     # How to handle DBPageNotFoundError from Sleepycat
-            #     # print(f"Lookup failed for {subject}")
-            #     # subprocess.check_call(["db_recover", "-ch", owl_uri])
-            #     # graph.open(owl_uri)
-            #     pass
-            loop_count += 1
-        hierarchy_onto_terms.extend(new_onto_terms)
-        next_onto_terms = [
-            x for x in new_onto_terms if x not in hierarchy_onto_set
-        ]
-        hierarchy_onto_set.update(new_onto_terms)
-    return hierarchy_onto_terms
+#     """
+#     hierarchy_onto_terms = onto_terms.copy()
+#     hierarchy_onto_set = set(hierarchy_onto_terms)
+#     next_onto_terms = onto_terms.copy()
+#     loop_count = 0
+#     curr_onto_len = 0
+#     while len(hierarchy_onto_terms) != curr_onto_len:
+#         curr_onto_len = len(hierarchy_onto_terms)
+#         new_onto_terms = []
+#         for onto_term in tqdm(
+#             next_onto_terms, desc=f"Hierarchy walk, loop {loop_count}"
+#         ):
+#             # try:
+#             loop_terms = [
+#                 p
+#                 for _, _, p in [
+#                     x
+#                     for x in graph.triples(
+#                         subj=onto_term,
+#                         obj="http://www.w3.org/2000/01/rdf-schema#subClassOf",
+#                     )
+#                 ]
+#                 if onto_str_match in str(p)
+#             ]
+#             for k, item in enumerate(loop_terms):
+#                 if "github" in str(item):
+#                     loop_terms[k] = basename(item)
+#             new_onto_terms.extend(loop_terms)
+#             # except Exception:
+#             #     # How to handle DBPageNotFoundError from Sleepycat
+#             #     # print(f"Lookup failed for {subject}")
+#             #     # subprocess.check_call(["db_recover", "-ch", owl_uri])
+#             #     # graph.open(owl_uri)
+#             #     pass
+#             loop_count += 1
+#         hierarchy_onto_terms.extend(new_onto_terms)
+#         next_onto_terms = [
+#             x for x in new_onto_terms if x not in hierarchy_onto_set
+#         ]
+#         hierarchy_onto_set.update(new_onto_terms)
+#     return hierarchy_onto_terms
 
 
 # def get_onto_counter(subjects, onto_str_match, graph):
@@ -245,7 +261,7 @@ def read_gene_info(gene_list_path):
 
 
 # Constant paths for testing
-l_1_path = "/hdd/data/embeddingEnrichment/distances/l_2_norm.emb.distances"
+distance_path = "/hdd/data/embeddingEnrichment/distances/l_1_norm.emb.distances"
 rels = import_instance_rels(
     "/home/zach/Dropbox/phd/research/hunter/embeddingEnrichment/data/PheKnowLator_Instance_RelationsOnly_NotClosed_NoOWL_Triples_Integer_Identifier_Map.json"
 )
@@ -275,13 +291,21 @@ prelim_ids = [
 ]
 
 # Get neighbor ids
-shared_neighbor_ids = get_id_neighbor_list(prelim_ids, l_1_path)
+shared_neighbor_ids = unpickle_or_process(
+    "/home/zach/data/shared_ids.pickle",
+    lambda: get_id_neighbor_list(prelim_ids, distance_path),
+)
+# shared_neighbor_ids = get_id_neighbor_list(prelim_ids, distance_path)
 
 # Read gene ids
 # gene_list_path = "/hdd/data/embeddingEnrichment/Homo_sapiens.gene_info"
 # gene_ids = read_gene_info(gene_list_path)
 protein_ids = [x for x in rels.values() if "/PR_" in x]
-all_gene_neighbor_ids = get_id_neighbor_list(protein_ids, l_1_path)
+all_gene_neighbor_ids = unpickle_or_process(
+    "/home/zach/data/protein_ids.pickle",
+    lambda: get_id_neighbor_list(protein_ids, distance_path),
+)
+# all_gene_neighbor_ids = get_id_neighbor_list(protein_ids, distance_path)
 
 # Find GO terms
 owl_identifier = "PheKnowLator_OWL"
@@ -294,11 +318,13 @@ def hash_filter_p(x):
 
 
 def get_onto_neighbors_sql(search_list, onto_str_match, graph):
-    new_keys = set()
+    new_keys = Counter()
+    prev_len = -1
     curr_len = len(new_keys) - 1
-    next_list = set(search_list)
+    next_list = search_list
     loop_iter = 0
-    while len(new_keys) != curr_len:
+    while len(next_list) != prev_len:
+        prev_len = len(next_list)
         curr_len = len(new_keys)
         print(f"Initial search loop {loop_iter}, new items: {len(next_list)}")
         query_list_str = ",".join(['"' + str(x) + '"' for x in next_list])
@@ -312,10 +338,10 @@ def get_onto_neighbors_sql(search_list, onto_str_match, graph):
             if (hash_filter_p(x[0]) or onto_str_match in str(x[0]))
             and x[0] not in new_keys
         )
-        next_list = set(x for x in found_list if x not in new_keys)
+        next_list = [x for x in found_list if x not in new_keys]
         new_keys.update(found_list)
         loop_iter += 1
-    return [x for x in new_keys if not hash_filter_p(x)]
+    return new_keys
 
 
 def counter_len(counter):
@@ -326,7 +352,7 @@ def walk_onto_tree_sql(search_list, onto_str_match, graph):
     tree_counter = Counter()
     curr_len = counter_len(tree_counter) - 1
     prev_len = curr_len - 1
-    next_list = search_list
+    next_list = search_list.keys()
     loop_iter = 0
     while (
         counter_len(tree_counter) != curr_len
@@ -382,7 +408,7 @@ if exists(global_counter_file):
 else:
     print("Finding hierarchy terms globally")
     global_counter = get_onto_counter(
-        shared_neighbor_ids + all_gene_neighbor_ids,
+        all_gene_neighbor_ids,
         "obolibrary",
         owl_graph,
     )
@@ -392,47 +418,25 @@ else:
 
 # Make the counter for the experiment
 print("Finding hierarchy terms for experiment")
-term_counter = get_onto_counter(shared_neighbor_ids, "obolibrary", owl_graph)
+local_counter_file = "/home/zach/data/local_counter.pickle"
+if exists(local_counter_file):
+    print("Reading local terms from file")
+    with open(local_counter_file, "rb") as local_counter_handle:
+        local_counter = pickle.load(local_counter_handle)
+else:
+    print("Finding hierarchy terms locally")
+    local_counter = get_onto_counter(
+        shared_neighbor_ids,
+        "obolibrary",
+        owl_graph,
+    )
+    print("Writing local terms to file")
+    with open(local_counter_file, "wb") as local_counter_handle:
+        pickle.dump(local_counter, local_counter_handle)
 
 owl_graph.close()
 
-print("Performing statistical tests")
-present_terms = {str(k): v for k, v in term_counter.items()}
-global_terms = {
-    str(k): v
-    for k, v in global_counter.items()
-    if str(k) in present_terms.keys()
-}
-
-# The actual test
-interest_items = Counter({k: v for k, v in term_counter.items() if "GO" in k})
-p_thresh = 0.001
-p_corr = p_thresh / len(interest_items)
-term_total = sum(present_terms.values())
-global_total = sum(global_terms.values())
-# Build contigency table: [pos_local pos_global] [non_local non_global]
-res_arr = []
-for term, pos_local in tqdm(
-    interest_items.most_common(), desc="Fisher Exact Tests"
-):
-    try:
-        pos_global = global_terms[str(term)]
-        non_local = term_total - pos_local
-        non_global = global_total - pos_global
-        odds, p_value = fisher_exact(
-            [[pos_local, pos_global], [non_local, non_global]],
-            alternative="less",
-        )
-        res_arr.append((term, p_value, odds))
-    except KeyError:
-        # FIXME find missing keys in global version
-        print(f"Missing key {term} in global.")
-        pass
-significant_arr = sorted(
-    [(str(k), p, o) for k, p, o in res_arr if p < p_corr],
-    key=lambda x: x[1],
-)
-
+# For making output more informative
 labels_file_path = "/hdd/data/embeddingEnrichment/PheKnowLator_Instance_RelationsOnly_NotClosed_NoOWL_NodeLabels.txt"
 labels_dic = {}
 with open(labels_file_path, "r") as labels_file_handle:
@@ -443,12 +447,81 @@ with open(labels_file_path, "r") as labels_file_handle:
         except IndexError:
             pass
 
-out_file_path = "/home/zach/data/enrichment_results.txt"
-with open(out_file_path, "w+") as out_file_handle:
-    for k, v, o in significant_arr:
-        base = basename(k)
-        desc = labels_dic[base]
-        out_file_handle.write(f"{k}\t{v}\t{o}\t{desc}\n")
+
+print("Performing statistical tests")
+
+
+def write_enrichment_results(
+    local_counter, global_counter, labels_dic, filter_str, out_path
+):
+    """Write out enrichment results using local_counter and global_counter
+    as the references for Fisher exact testing with Bonferroni
+    testing. Labels dic uses a PheKnowLator nodelabels file to write
+    out the labels for each enriched item, to facilitate easier
+    interpretation by humans. The resulting tab separted file is
+    written to OUT_PATH.
+
+    """
+    # Normalize keys to strings, in case an int popped up somewhere
+    print(f"Analyzing enrichment for {filter_str}")
+    present_terms = {str(k): v for k, v in local_counter.items()}
+    global_terms = {
+        str(k): v
+        for k, v in global_counter.items()
+        if str(k) in present_terms.keys()
+    }
+
+    # Prepare for testing by pulling items
+    interest_items = Counter(
+        {k: v for k, v in local_counter.items() if filter_str in k}
+    )
+    p_thresh = 1e-10
+    p_corr = p_thresh / len(interest_items)
+    term_total = sum(present_terms.values())
+    global_total = sum(interest_items.values())
+
+    # Build contingency table: [pos_local pos_global] [non_local non_global]
+    # Do the test for each item we've collected
+    res_arr = []
+    for term, pos_local in tqdm(
+        interest_items.most_common(), desc="Fisher Exact Tests"
+    ):
+        try:
+            pos_global = global_terms[str(term)]
+            non_local = term_total - pos_local
+            non_global = global_total - pos_global
+            odds, p_value = fisher_exact(
+                [[pos_local, pos_global], [non_local, non_global]],
+                alternative="less",
+            )
+            res_arr.append((term, p_value, odds))
+        except KeyError:
+            # FIXME find missing keys in global version
+            print(f"Missing key {term} in global.")
+            pass
+
+    # Grab only significant items passing bonferroni threshold
+    significant_arr = sorted(
+        [(str(k), p, o) for k, p, o in res_arr if p < p_corr],
+        key=lambda x: x[1],
+    )
+
+    # Write output
+    with open(out_path, "w+") as out_file_handle:
+        for k, v, o in significant_arr:
+            base = basename(k)
+            desc = labels_dic[base]
+            out_file_handle.write(f"{k}\t{v}\t{o}\t{desc}\n")
+
+
+for ontology in ("DOID", "GO", "CHEBI", "PR", "obolibrary"):
+    write_enrichment_results(
+        local_counter,
+        global_counter,
+        labels_dic,
+        ontology,
+        f"/home/zach/data/{ontology}_enrichment_results.txt",
+    )
 
 
 #

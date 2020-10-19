@@ -36,7 +36,7 @@ import json
 from os.path import basename, exists
 import triples_sqlite
 from tqdm import tqdm
-from scipy.stats import fisher_exact
+from scipy.stats import fisher_exact, hypergeom
 
 
 def unpickle_or_process(pickle_path, alt_function):
@@ -323,20 +323,19 @@ def get_onto_neighbors_sql(search_list, onto_str_match, graph):
     curr_len = len(new_keys) - 1
     next_list = search_list
     loop_iter = 0
-    while len(next_list) != prev_len:
+    while len(next_list) != prev_len or len(next_list) != 0:
         prev_len = len(next_list)
         curr_len = len(new_keys)
         print(f"Initial search loop {loop_iter}, new items: {len(next_list)}")
         query_list_str = ",".join(['"' + str(x) + '"' for x in next_list])
-        query = (
-            f"select predicate from triples where subject in ({query_list_str})"
-        )
+        subclass_term_str = '"http://www.w3.org/2000/01/rdf-schema#subClassOf"'
+        query = f"select predicate from triples where subject in ({query_list_str}) and object <> {subclass_term_str}"
         all_matches = graph.connection.execute(query)
         found_list = set(
             x[0]
             for x in tqdm(all_matches.fetchall())
             if (hash_filter_p(x[0]) or onto_str_match in str(x[0]))
-            and x[0] not in new_keys
+            # and x[0] not in new_keys
         )
         next_list = [x for x in found_list if x not in new_keys]
         new_keys.update(found_list)
@@ -364,12 +363,21 @@ def walk_onto_tree_sql(search_list, onto_str_match, graph):
         print(f"Graph search loop {loop_iter}, new items: {len(next_list)}")
         query_list_str = ",".join(['"' + str(x) + '"' for x in next_list])
         subclass_term_str = '"http://www.w3.org/2000/01/rdf-schema#subClassOf"'
-        query = f"select predicate from triples where subject in ({query_list_str}) and object = {subclass_term_str}"
-        all_matches = graph.connection.execute(query)
+        all_matches = []
+        for item in tqdm(next_list, desc="SQL queries"):
+            item_str = f'"{item}"'
+            query = f"select predicate from triples where subject = {item_str} and object = {subclass_term_str}"
+            item_matches = graph.connection.execute(query)
+            all_matches.extend([x for x in item_matches.fetchall()])
+        # subclass_term_str = '"http://www.w3.org/2000/01/rdf-schema#subClassOf"'
+        # query = f"select predicate from triples where subject in ({query_list_str}) and object = {subclass_term_str}"
+        # all_matches = graph.connection.execute(query)
         found_list = [
             x[0]
-            for x in tqdm(all_matches.fetchall())
-            if (hash_filter_p(x[0]) or onto_str_match in str(x[0]))
+            for x in tqdm(
+                all_matches, desc="Collecting  matches"
+            )  # .fetchall())
+            # if (hash_filter_p(x[0]) or onto_str_match in str(x[0]))
             # and x[0] not in tree_counter.keys()
         ]
         next_list = found_list
@@ -415,6 +423,10 @@ else:
     print("Writing global terms to file")
     with open(global_counter_file, "wb") as global_counter_handle:
         pickle.dump(global_counter, global_counter_handle)
+
+import gc
+
+gc.collect()
 
 # Make the counter for the experiment
 print("Finding hierarchy terms for experiment")
@@ -475,10 +487,13 @@ def write_enrichment_results(
     interest_items = Counter(
         {k: v for k, v in local_counter.items() if filter_str in k}
     )
-    p_thresh = 1e-10
-    p_corr = p_thresh / len(interest_items)
-    term_total = sum(present_terms.values())
-    global_total = sum(interest_items.values())
+    p_thresh = 0.05
+    try:
+        p_corr = p_thresh / len(interest_items)
+    except ZeroDivisionError:
+        return []
+    local_total = sum(interest_items.values())
+    global_total = sum(global_counter.values())
 
     # Build contingency table: [pos_local pos_global] [non_local non_global]
     # Do the test for each item we've collected
@@ -488,12 +503,16 @@ def write_enrichment_results(
     ):
         try:
             pos_global = global_terms[str(term)]
-            non_local = term_total - pos_local
-            non_global = global_total - pos_global
-            odds, p_value = fisher_exact(
-                [[pos_local, pos_global], [non_local, non_global]],
-                alternative="less",
+            # non_local = local_total - pos_local
+            # non_global = global_total - pos_global
+            p_value = test_prob(
+                pos_local, global_total, local_total, num_matching=1
             )
+            odds = 0
+            # odds, p_value = fisher_exact(
+            #     [[pos_local, pos_global], [non_local, non_global]],
+            #     alternative="less",
+            # )
             res_arr.append((term, p_value, odds))
         except KeyError:
             # FIXME find missing keys in global version
@@ -505,6 +524,7 @@ def write_enrichment_results(
         [(str(k), p, o) for k, p, o in res_arr if p < p_corr],
         key=lambda x: x[1],
     )
+    print(f"{len(significant_arr)} significant items")
 
     # Write output
     with open(out_path, "w+") as out_file_handle:
@@ -514,8 +534,14 @@ def write_enrichment_results(
             out_file_handle.write(f"{k}\t{v}\t{o}\t{desc}\n")
 
 
-for ontology in ("DOID", "GO", "CHEBI", "PR", "obolibrary"):
-    write_enrichment_results(
+for ontology in (
+    "obolibrary",
+    "DOID",
+    "BFO",
+    "GO",
+    "CHEBI",
+):
+    res_arr = write_enrichment_results(
         local_counter,
         global_counter,
         labels_dic,
